@@ -1,7 +1,6 @@
 import dotenv from 'dotenv'
 import pg from 'pg'
 dotenv.config()
-console.log("DB_URL =", process.env.DB_URL);
 
 const { Pool } = pg;
 
@@ -13,221 +12,165 @@ const pool = new Pool({
 });
 
 const initializeDatabase = async () => {
-    console.log('Initializing book database...')
+    console.log('--- Ініціалізація бази даних Sidorovich Engine v1.0 ---')
 
     const createTableQuery = `
-    CREATE TABLE IF NOT EXISTS book (
+    CREATE TABLE IF NOT EXISTS artifacts (
         id SERIAL PRIMARY KEY,
-        title TEXT NOT NULL,
-        author TEXT NOT NULL,
-        genre TEXT DEFAULT 'Unknown',
-        publication_year INTEGER,
-        pages INTEGER,
-        rating NUMERIC(3,2),
-        is_available BOOLEAN DEFAULT TRUE,
-        borrower_contact TEXT,
-        notes TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        name TEXT NOT NULL,
+        origin_anomaly TEXT NOT NULL,
+        rarity TEXT DEFAULT 'Common',
+        radiation_level NUMERIC(4,2), -- В мілірентгенах
+        weight NUMERIC(4,2),
+        market_value INTEGER, -- Ціна в купонах
+        is_contained BOOLEAN DEFAULT TRUE,
+        stalker_owner TEXT,
+        properties_notes TEXT,
+        found_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );`;
 
     try {
         await pool.query(createTableQuery);
-        console.log('Books table is ready.');
+        console.log('Сховище артефактів готове до експлуатації.');
     } catch(error) {
-        console.error("Error initializing database:", error.message);
+        console.error("Критична помилка систем:", error.message);
         throw error;
     }
 };
 
-// INSERT
-async function addBook(title, author, genre, year, pages, rating, contact, notes) {
-
-    if (rating < 0 || rating > 5) {
-        console.error("Помилка: rating має бути від 0 до 5");
+// INSERT (Додати артефакт)
+async function addArtifact(name, anomaly, rarity, rad, weight, value, owner, notes) {
+    // Валідація радіації (не може бути від'ємною)
+    if (rad < 0) {
+        console.error("Помилка: Радіаційний фон не може бути від'ємним!");
         return;
     }
 
     const query = `
-        INSERT INTO book
-        (title, author, genre, publication_year, pages, rating, borrower_contact, notes)
+        INSERT INTO artifacts
+        (name, origin_anomaly, rarity, radiation_level, weight, market_value, stalker_owner, properties_notes)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
         RETURNING *`;
 
-    const values = [title, author, genre, year, pages, rating, contact, notes];
+    const values = [name, anomaly, rarity, rad, weight, value, owner, notes];
 
     try {
         const res = await pool.query(query, values);
-        console.log("Книгу додано:", res.rows[0]);
+        console.log("Артефакт занесено в реєстр:", res.rows[0].name);
     } catch(err) {
-        console.error("Error:", err.message);
+        console.error("Помилка при скануванні:", err.message);
     }
 }
 
-// SELECT
-async function getAllBooks() {
-
-    const res = await pool.query("SELECT * FROM book");
-
+// SELECT (Список усіх артефактів)
+async function getInventory() {
+    console.log("--- ПОТОЧНИЙ ВМІСТ КОНТЕЙНЕРІВ ---");
+    const res = await pool.query("SELECT * FROM artifacts ORDER BY id ASC");
     console.table(res.rows);
 }
 
-// перевірка чи існує книга
-async function bookExists(id) {
-
-    const res = await pool.query(
-        "SELECT * FROM book WHERE id = $1",
-        [id]
-    );
-
+// Перевірка наявності в базі
+async function artifactExists(id) {
+    const res = await pool.query("SELECT * FROM artifacts WHERE id = $1", [id]);
     return res.rows.length > 0;
 }
 
-// UPDATE
-async function updateBookRating(id, newRating) {
-
+// UPDATE (Оновити ринкову вартість)
+async function updateValue(id, newValue) {
     if (isNaN(id) || id <= 0) {
-        console.error("Помилка: ID має бути додатним числом");
+        console.error("Помилка: Невірний ID лота");
         return;
     }
 
-    if (!(await bookExists(id))) {
-        console.error(`Помилка: Книгу з ID ${id} не знайдено`);
-        return;
-    }
-
-    if (newRating < 0 || newRating > 5) {
-        console.error("Помилка: rating має бути від 0 до 5");
+    if (!(await artifactExists(id))) {
+        console.error(`Помилка: Об'єкт №${id} відсутній у базі`);
         return;
     }
 
     const query = `
-        UPDATE book
-        SET rating = $1
+        UPDATE artifacts
+        SET market_value = $1
         WHERE id = $2
         RETURNING *`;
 
-    const res = await pool.query(query, [newRating, id]);
-
-    console.log("Книгу оновлено:", res.rows[0]);
+    const res = await pool.query(query, [newValue, id]);
+    console.log("Ціну оновлено. Сидорович задоволений:", res.rows[0].name);
 }
 
-// DELETE
-async function deleteBook(id) {
-
-    if (isNaN(id) || id <= 0) {
-        console.error("Помилка: ID має бути додатним числом");
+// DELETE (Видалити/Продати артефакт)
+async function decommissionArtifact(id) {
+    if (!(await artifactExists(id))) {
+        console.error(`Помилка: Об'єкт №${id} не знайдено.`);
         return;
     }
 
-    if (!(await bookExists(id))) {
-        console.error(`Помилка: Книгу з ID ${id} не знайдено`);
-        return;
-    }
-
-    await pool.query(
-        "DELETE FROM book WHERE id = $1",
-        [id]
-    );
-
-    console.log(`Книгу з ID ${id} було видалено.`);
+    await pool.query("DELETE FROM artifacts WHERE id = $1", [id]);
+    console.log(`Об'єкт №${id} вилучено зі сховища (списано або продано).`);
 }
 
 (async () => {
-
     try {
-
         await initializeDatabase();
 
-        switch(process.argv[2]) {
+        const command = process.argv[2];
 
-            case "list": {
-                await getAllBooks();
+        switch(command) {
+            case "inventory": {
+                await getInventory();
                 break;
             }
 
-            case "add": {
-
+            case "scan": { // Раніше 'add'
                 if (process.argv.length < 11) {
-                    console.log("Usage:");
-                    console.log("node db.js add <title> <author> <genre> <year> <pages> <rating> <contact> <notes>");
+                    console.log("Використання:");
+                    console.log("node db.js scan <назва> <аномалія> <рідкість> <радіація> <вага> <ціна> <власник> <нотатки>");
                     break;
                 }
-
-                await addBook(
-                    process.argv[3],
-                    process.argv[4],
-                    process.argv[5],
-                    parseInt(process.argv[6]),
-                    parseInt(process.argv[7]),
-                    parseFloat(process.argv[8]),
-                    process.argv[9],
-                    process.argv[10]
+                await addArtifact(
+                    process.argv[3], // назва
+                    process.argv[4], // аномалія
+                    process.argv[5], // рідкість
+                    parseFloat(process.argv[6]), // радіація
+                    parseFloat(process.argv[7]), // вага
+                    parseInt(process.argv[8]),   // ціна
+                    process.argv[9], // власник
+                    process.argv[10] // нотатки
                 );
-
                 break;
             }
 
-            case "update": {
-
-                if (process.argv.length < 5) {
-                    console.log("Usage: node db.js update <id> <rating>");
-                    break;
-                }
-
+            case "revalue": { // Раніше 'update'
                 const id = parseInt(process.argv[3]);
-                const rating = parseFloat(process.argv[4]);
-
-                if (isNaN(id) || isNaN(rating)) {
-                    console.log("Помилка: ID та rating мають бути числами");
-                    break;
-                }
-
-                await updateBookRating(id, rating);
+                const price = parseInt(process.argv[4]);
+                await updateValue(id, price);
                 break;
             }
 
-            case "delete": {
-
-                if (process.argv.length < 4) {
-                    console.log("Usage: node db.js delete <id>");
-                    break;
-                }
-
+            case "dispose": { // Раніше 'delete'
                 const id = parseInt(process.argv[3]);
-
-                if (isNaN(id)) {
-                    console.log("Помилка: ID має бути числом");
-                    break;
-                }
-
-                await deleteBook(id);
+                await decommissionArtifact(id);
                 break;
             }
 
-            case "help": {
-                console.log("Доступні команди:");
-                console.log("node db.js list");
-                console.log("node db.js add <title> <author> <genre> <year> <pages> <rating> <contact> <notes>");
-                console.log("node db.js update <id> <rating>");
-                console.log("node db.js delete <id>");
+            case "pda": {
+                console.log("Доступні команди КПК:");
+                console.log("node db.js inventory - перегляд сховища");
+                console.log("node db.js scan <name> <anomaly> <rarity> <rad> <weight> <value> <owner> <notes> - додати артефакт");
+                console.log("node db.js revalue <id> <new_price> - змінити ціну");
+                console.log("node db.js dispose <id> - видалити об'єкт");
                 break;
             }
 
             default: {
-                console.log("Usage: node db.js [list|add|update|delete|help]");
+                console.log("Невідомий сигнал. Спробуйте: node db.js pda");
                 break;
             }
         }
 
     } catch(err) {
-
-        console.error("Error:", err.message);
-
+        console.error("Аномальна помилка виконання:", err.message);
     } finally {
-
-        console.log("Завершення роботи з базою даних...");
+        console.log("--- Зв'язок розірвано ---");
         process.exit();
-
     }
-
 })();
